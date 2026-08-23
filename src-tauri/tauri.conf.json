@@ -21,7 +21,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb"],
+    "targets": ["deb", "dmg", "app"],
     "icon": ["icons/icon.png"]
   }
 }
