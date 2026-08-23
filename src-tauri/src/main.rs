@@ -921,17 +921,25 @@ fn install_desktop_entry() {
     if fs::create_dir_all(&icon_dir).is_ok() {
         let _ = fs::write(icon_dir.join("cs-router.png"), include_bytes!("../icons/icon.png"));
     }
+    // 把二进制安装到 ~/.local/bin，桌面项指向标准路径，不依赖源码目录
+    let bin_dir = home_dir().join(".local/bin");
+    let _ = fs::create_dir_all(&bin_dir);
+    let installed = std::env::current_exe().ok().and_then(|src| {
+        let dst = bin_dir.join("cs-router");
+        fs::copy(&src, &dst).ok().map(|_| dst)
+    });
+    let exec_path = installed
+        .map(|p| format!("\"{}\"", p.display()))
+        .unwrap_or_else(|| "cs-router".to_string());
     let apps_dir = home_dir().join(".local/share/applications");
     if fs::create_dir_all(&apps_dir).is_ok() {
-        let exec = std::env::current_exe()
-            .map(|p| format!("\"{}\"", p.display()))
-            .unwrap_or_else(|_| "cs-router".to_string());
         let desk = format!(
-            "[Desktop Entry]\nType=Application\nName=CS Router\nExec={exec}\nIcon=cs-router\nStartupWMClass=cs-router\nCategories=Utility;\n"
+            "[Desktop Entry]\nType=Application\nName=CS Router\nExec={exec_path}\nIcon=cs-router\nStartupWMClass=cs-router\nCategories=Utility;\n"
         );
         let _ = fs::write(apps_dir.join("cs-router.desktop"), desk);
         // 清理旧名桌面项与图标
         let _ = fs::remove_file(apps_dir.join("cs-switch.desktop"));
+        let _ = fs::remove_file(apps_dir.join("cc-switch-handler.desktop"));
         let _ = fs::remove_file(home_dir().join(".local/share/icons/hicolor/512x512/apps/cs-switch.png"));
         // 刷新图标主题缓存与应用数据库，dock 即时取到新图标
         let _ = Command::new("gtk-update-icon-cache")
