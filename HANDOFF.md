@@ -73,27 +73,29 @@ claude-science 的网页端认证只认磁盘上的加密 OAuth 令牌文件（`
 
 1. **bundle targets 漏平台**：`tauri.conf.json` 的 `bundle.targets` 只写 `["deb"]` 会导致 macOS 构建器不产出任何安装包，CI 的 rename 步骤因目录不存在而报错。必须写 `["deb", "dmg", "app"]`。
 
-2. **WebKitGTK 磁盘缓存**：页面资产缓存在 `~/.local/share/io.github.yuntao.cs-router/WebKitCache` 与 `CacheStorage`，二进制更新后窗口仍读旧缓存。程序启动时必须先删这两个目录（已实现于 `clear_webview_cache()`）。曾导致多轮界面改动看似无效。
+2. **CI release job 缺 checkout**：`gh release create` 需要在 git 仓库内执行。release job 里没有 `actions/checkout` 步骤时，`gh` 找不到仓库直接报 `fatal: not a git repository`。release job 第一步必须是 `uses: actions/checkout@v4`。
 
-3. **`<form>` 内按钮隐式提交**：编辑页表单装在 `<form>` 元素里，预设模板等按钮没加 `type="button"` 会触发表单提交导致页面刷新回主页。所有表单内按钮必须显式 `type="button"`，并在 form 上兜底 `preventDefault`。
+3. **WebKitGTK 磁盘缓存**：页面资产缓存在 `~/.local/share/io.github.yuntao.cs-router/WebKitCache` 与 `CacheStorage`，二进制更新后窗口仍读旧缓存。程序启动时必须先删这两个目录（已实现于 `clear_webview_cache()`）。曾导致多轮界面改动看似无效。
 
-4. **窗口拖拽**：`data-tauri-drag-region` 属性必须挂在接收 mousedown 的元素上。子元素会拦截事件，需加 `pointer-events: none` 让事件穿透到带属性的容器。编辑页整窗被遮罩铺满时，遮罩内各级容器都需要加该属性。最终方案：挂在 `<body>` 上，空白处全部可拖。
+4. **`<form>` 内按钮隐式提交**：编辑页表单装在 `<form>` 元素里，预设模板等按钮没加 `type="button"` 会触发表单提交导致页面刷新回主页。所有表单内按钮必须显式 `type="button"`，并在 form 上兜底 `preventDefault`。
 
-5. **Tauri 前端资产嵌入**：前端目录在 crate 外（`../ui/`），`build.rs` 必须显式声明 `cargo:rerun-if-changed`，否则改了前端文件 cargo 不会重新嵌入。
+5. **窗口拖拽**：`data-tauri-drag-region` 属性必须挂在接收 mousedown 的元素上。子元素会拦截事件，需加 `pointer-events: none` 让事件穿透到带属性的容器。编辑页整窗被遮罩铺满时，遮罩内各级容器都需要加该属性。最终方案：挂在 `<body>` 上，空白处全部可拖。
 
-6. **cargo clean 后目录改名**：项目目录从 `~/cs-switch` 改为 `~/cs-router` 后，target 目录里的绝对路径缓存导致构建失败，必须 `cargo clean` 全量重建。
+6. **Tauri 前端资产嵌入**：前端目录在 crate 外（`../ui/`），`build.rs` 必须显式声明 `cargo:rerun-if-changed`，否则改了前端文件 cargo 不会重新嵌入。
 
-7. **圆角蒙版方向**：ImageMagick 的 `roundrectangle` 默认黑色填充，在白色 alpha 提取图上画黑矩形导致蒙版反转（中间透明、四角保留）。正确做法：`xc:black -fill white -draw 'roundrectangle ...'`。
+7. **cargo clean 后目录改名**：项目目录从 `~/cs-switch` 改为 `~/cs-router` 后，target 目录里的绝对路径缓存导致构建失败，必须 `cargo clean` 全量重建。
 
-8. **GNOME 启动台**：桌面项指向开发路径不可靠，程序启动时自动把二进制复制到 `~/.local/bin/`，桌面项 `Exec` 指向该标准路径。
+8. **圆角蒙版方向**：ImageMagick 的 `roundrectangle` 默认黑色填充，在白色 alpha 提取图上画黑矩形导致蒙版反转（中间透明、四角保留）。正确做法：`xc:black -fill white -draw 'roundrectangle ...'`。
 
-9. **GitHub 推送网络**：直连 github.com 常超时或 GnuTLS 错误，需走本地代理 `git config http.proxy http://127.0.0.1:7890`。
+9. **GNOME 启动台**：桌面项指向开发路径不可靠，程序启动时自动把二进制复制到 `~/.local/bin/`，桌面项 `Exec` 指向该标准路径。
 
-10. **claude-science 升级后兼容性**：从 0.1.25 升到 0.1.27 后虚拟登录、中继、映射全部正常，无需改动。但升级前要停守护进程再 `claude-science update`。
+10. **GitHub 推送网络**：直连 github.com 常超时或 GnuTLS 错误，需走本地代理 `git config http.proxy http://127.0.0.1:7890`。
 
-11. **配置迁移**：`~/.cs-switch` → `~/.cs-router` 的迁移在程序启动时一次性 `fs::rename`，只在旧目录存在且新目录不存在时执行。
+11. **claude-science 升级后兼容性**：从 0.1.25 升到 0.1.27 后虚拟登录、中继、映射全部正常，无需改动。但升级前要停守护进程再 `claude-science update`。
 
-12. **图片必须 RGBA**：Tauri 的 `generate_context!` 宏要求嵌入图标为 RGBA 格式，RGB 不行。ImageMagick 转换时加 `-define png:color-type=6`。
+12. **配置迁移**：`~/.cs-switch` → `~/.cs-router` 的迁移在程序启动时一次性 `fs::rename`，只在旧目录存在且新目录不存在时执行。
+
+13. **图片必须 RGBA**：Tauri 的 `generate_context!` 宏要求嵌入图标为 RGBA 格式，RGB 不行。ImageMagick 转换时加 `-define png:color-type=6`。
 
 ## 已验证的事实
 
