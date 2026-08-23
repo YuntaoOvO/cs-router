@@ -1,9 +1,12 @@
-name: Build
+name: Build & Release
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-linux:
@@ -19,26 +22,34 @@ jobs:
         run: cargo install tauri-cli --locked
       - name: Build deb
         run: cd src-tauri && cargo tauri build
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Rename with platform
+        run: |
+          cd src-tauri/target/release/bundle/deb
+          for f in *.deb; do cp "$f" "cs-router-linux-amd64.deb"; done
+      - uses: actions/upload-artifact@v4
         with:
           name: linux-deb
-          path: src-tauri/target/release/bundle/deb/*.deb
+          path: src-tauri/target/release/bundle/deb/cs-router-linux-amd64.deb
 
   build-macos-arm:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
       - name: Install tauri-cli
         run: cargo install tauri-cli --locked
       - name: Build dmg (Apple Silicon)
         run: cd src-tauri && cargo tauri build --target aarch64-apple-darwin
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Rename with platform
+        run: |
+          cd src-tauri/target/aarch64-apple-darwin/release/bundle/dmg
+          for f in *.dmg; do cp "$f" "cs-router-macos-aarch64.dmg"; done
+      - uses: actions/upload-artifact@v4
         with:
-          name: macos-dmg-arm
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          name: macos-arm
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/cs-router-macos-aarch64.dmg
 
   build-macos-intel:
     runs-on: macos-latest
@@ -51,11 +62,14 @@ jobs:
         run: cargo install tauri-cli --locked
       - name: Build dmg (Intel)
         run: cd src-tauri && cargo tauri build --target x86_64-apple-darwin
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Rename with platform
+        run: |
+          cd src-tauri/target/x86_64-apple-darwin/release/bundle/dmg
+          for f in *.dmg; do cp "$f" "cs-router-macos-x86_64.dmg"; done
+      - uses: actions/upload-artifact@v4
         with:
-          name: macos-dmg-intel
-          path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+          name: macos-intel
+          path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/cs-router-macos-x86_64.dmg
 
   release:
     needs: [build-linux, build-macos-arm, build-macos-intel]
@@ -65,18 +79,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Rename and upload to release
+      - name: Create release with all artifacts
         run: |
-          for f in artifacts/macos-dmg-arm/*.dmg; do
-            cp "$f" "$(echo "$f" | sed 's/cs-router/cs-router-aarch64/')"
-          done
-          for f in artifacts/macos-dmg-intel/*.dmg; do
-            cp "$f" "$(echo "$f" | sed 's/cs-router/cs-router-x86_64/')"
-          done
-          gh release upload "$GITHUB_REF_NAME" \
-            artifacts/linux-deb/*.deb \
-            artifacts/macos-dmg-arm/cs-router-aarch64*.dmg \
-            artifacts/macos-dmg-intel/cs-router-x86_64*.dmg \
-            --clobber
+          gh release create "$GITHUB_REF_NAME" \
+            --title "CS Router $GITHUB_REF_NAME" \
+            --generate-notes \
+            artifacts/linux-deb/cs-router-linux-amd64.deb \
+            artifacts/macos-arm/cs-router-macos-aarch64.dmg \
+            artifacts/macos-intel/cs-router-macos-x86_64.dmg
         env:
           GH_TOKEN: ${{ github.token }}
