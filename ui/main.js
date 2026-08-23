@@ -2,10 +2,10 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const PRESETS = {
-  sample_a: { name: '示例供应商 A', base_url: 'https://api.example-a.com/anthropic', key_type: 'api_key' },
-  sample_b: { name: '示例供应商 B', base_url: 'https://api.example-b.com/v1', key_type: 'api_key' },
-  sample_c: { name: '示例供应商 C', base_url: 'https://api.example-c.com/api', key_type: 'api_key' },
-  sample_d: { name: '示例供应商 D', base_url: 'https://api.example-d.com', key_type: 'auth_token' },
+  deepseek: { name: 'DeepSeek', base_url: 'https://api.deepseek.com/anthropic', key_type: 'api_key' },
+  zhipu: { name: '智谱 GLM', base_url: 'https://open.bigmodel.cn/api/anthropic', key_type: 'api_key' },
+  kimi: { name: 'Kimi', base_url: 'https://api.kimi.com/coding/', key_type: 'api_key' },
+  openrouter: { name: 'OpenRouter', base_url: 'https://openrouter.ai/api/v1', key_type: 'api_key' },
 };
 
 const SVG_EDIT = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>';
