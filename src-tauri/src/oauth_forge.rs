@@ -138,17 +138,23 @@ fn parse_key_file(path: &Path) -> BTreeMap<String, String> {
     keys
 }
 
+/// 读取已铸造的稳定虚拟账号标识，供中继应答认证探测使用。
+pub fn virtual_ids(app_dir: &Path) -> Option<(String, String)> {
+    let txt = fs::read_to_string(app_dir.join("virtual-login.json")).ok()?;
+    let v = serde_json::from_str::<serde_json::Value>(&txt).ok()?;
+    let a = v["account_uuid"].as_str()?.to_string();
+    let o = v["org_uuid"].as_str()?.to_string();
+    if a.is_empty() || o.is_empty() {
+        return None;
+    }
+    Some((a, o))
+}
+
 /// 稳定的虚拟账号标识存于本程序自己的目录，重铸时沿用，避免旧对话挂不上。
 fn stable_ids(app_dir: &Path) -> Result<(String, String), String> {
     let path = app_dir.join("virtual-login.json");
-    if let Ok(txt) = fs::read_to_string(&path) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
-            let a = v["account_uuid"].as_str().unwrap_or("");
-            let o = v["org_uuid"].as_str().unwrap_or("");
-            if !a.is_empty() && !o.is_empty() {
-                return Ok((a.to_string(), o.to_string()));
-            }
-        }
+    if let Some(ids) = virtual_ids(app_dir) {
+        return Ok(ids);
     }
     let ids = json!({
         "account_uuid": uuid_v4()?,

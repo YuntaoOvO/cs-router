@@ -1,7 +1,7 @@
 # HANDOFF：CS Router 项目交接
 
-日期：2026-08-23
-状态：v1.0.0 CI 三平台构建中（曾因 bundle targets 缺 dmg 失败，已修复重新触发）。本文件是全部有效结论与教训的交接，下一位执行者从这里继续。
+日期：2026-08-24
+状态：v1.0.0 已发布。08-24 修复 P0 会话失效事故（坑 14-16）：认证探测改由中继本地应答，登录态与 claude.ai 解耦；spawn_serve 剥离代理环境变量。本文件是全部有效结论与教训的交接，下一位执行者从这里继续。
 
 ## 项目是什么
 
@@ -97,6 +97,12 @@ claude-science 的网页端认证只认磁盘上的加密 OAuth 令牌文件（`
 
 13. **图片必须 RGBA**：Tauri 的 `generate_context!` 宏要求嵌入图标为 RGBA 格式，RGB 不行。ImageMagick 转换时加 `-define png:color-type=6`。
 
+14. **守护进程绝不能带代理环境变量启动**：claude-science 的认证探测是三态逻辑——401 → 判定登出（fail-closed）、网络错误/超时 → 睁一只眼闭一只眼（fail-open）、403 Cloudflare 挑战 → 视为 valid。守护进程若继承可用的代理变量（事故根源：用户在带 `HTTPS_PROXY=127.0.0.1:7799` 的终端手动启动了 claude-science），claude.ai 变得可达，虚拟令牌在真 claude.ai 上必吃 401 → 界面弹 "Your Claude session is no longer valid"、agent 以 `same_token_after_refresh → going terminal` 死亡。`spawn_serve` 现在无条件剥离全部代理变量；**永远不要在终端手动启动 claude-science**。
+
+15. **OpenRouter 的 Anthropic 兼容端点在 `/api/v1`**：`https://openrouter.ai/v1/messages` 返回的是营销网站 HTML（200！），真端点是 `https://openrouter.ai/api/v1/messages`（Bearer 认证）。base_url 配 `https://openrouter.ai/api`（中继剥 `/v1` 规则下拼出正确路径）。症状：推理拿到 HTML 而非 JSON。
+
+16. **claude.ai 认证探测已由中继本地应答**：claude-science 支持 `update.claude_ai_base_url` 覆盖探测基地址（实测守护进程采纳；CLI 与守护进程的 caFetch 默认实例都读它）。cs-router 启动时幂等写入 `~/.claude-science/config.toml` 的 `[update]` 段指向中继，中继对 `GET /api/oauth/profile` 固定应答 200 虚拟档案（org UUID 取自 virtual-login.json）。登录态自此与 claude.ai 可达性彻底解耦。注意：`set_default_model` 只动根级 `default_model` 行，不会冲掉 `[update]` 段。
+
 ## 已验证的事实
 
 - serve 默认端口 8000，`claude-science status` 输出 JSON 含 `running` 与 `port`
@@ -105,6 +111,11 @@ claude-science 的网页端认证只认磁盘上的加密 OAuth 令牌文件（`
 - 登录链路依赖 claude.ai 授权页与 platform.claude.com 令牌交换，虚拟登录使两者不再必要
 - 模型列表候选规则：地址以版本段结尾时候选为地址加 `/models`；其余情况地址加 `/v1/models`；以兼容子路径结尾时追加剥掉子路径后的根地址候选
 - 兼容子路径清单：`/api/claudecode`、`/api/anthropic`、`/apps/anthropic`、`/api/coding`、`/claudecode`、`/anthropic`、`/step_plan`、`/coding`、`/claude`
+
+## 已知无害噪音（留观，不要当故障修）
+
+- 守护进程日志每 5 分钟左右一条 `claudeAiFetch: 401 and refresh failed — treating as logged-out`：来自另一组 baseUrl 硬编码 `api.anthropic.com` 的 caFetch 探测实例（config 旋钮只覆盖默认实例），虚拟令牌在真 api.anthropic.com 上必然 401。实测非致命（2026-08-23 全天 2110 条照常工作），不驱动 UI 横幅、不触发 agent terminal。若未来要根除，需等长替换二进制内 `"https://api.anthropic.com"` 常量（25 字节，需同长主机名如 nip.io 类）或引入本地 443 TLS 拦截，代价大，暂不做。
+- `stealth/ox-alpha`（OpenRouter 共享池）上游容量 429 → UI 显示 "Claude is at capacity — retrying"，守护进程自动退避重试，属供应商侧现象。
 
 ## CI 发版流程
 

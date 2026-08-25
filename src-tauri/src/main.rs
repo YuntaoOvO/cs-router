@@ -162,6 +162,33 @@ fn science_config_toml() -> PathBuf {
     home_dir().join(".claude-science").join("config.toml")
 }
 
+/// 把守护进程的 claude.ai 认证探测指向本地中继：claude-science 支持
+/// update.claude_ai_base_url 覆盖（已实测守护进程采纳）。探测改由中继
+/// 应答 200 后，登录态不再随 claude.ai 的可达性随机翻转。幂等：已是
+/// 目标值则不写；已有其他值则原位替换；无则追加 [update] 段。
+fn ensure_profile_redirect(relay_base: &str) {
+    let path = science_config_toml();
+    let text = fs::read_to_string(&path).unwrap_or_default();
+    let want = format!("claude_ai_base_url = \"{relay_base}\"");
+    for line in text.lines() {
+        if line.trim_start().starts_with("claude_ai_base_url") && line.contains('=') {
+            if line.trim() == want {
+                return;
+            }
+            let _ = fs::write(&path, text.replacen(line, &want, 1));
+            return;
+        }
+    }
+    let mut out = text;
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("\n[update]\n");
+    out.push_str(&want);
+    out.push('\n');
+    let _ = fs::write(&path, out);
+}
+
 fn official_provider() -> Provider {
     Provider {
         id: OFFICIAL_ID.to_string(),
@@ -397,6 +424,14 @@ fn spawn_serve(
     base_override: Option<&str>,
 ) -> Result<(), String> {
     let mut cmd = Command::new("claude-science");
+    // 宿主环境可能带代理变量（终端里手动拉起守护进程正是本次事故根源）：
+    // 探测已由中继本地应答，代理只会把探测引去真 claude.ai 吃 401，一律剥掉
+    for k in [
+        "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY",
+        "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY",
+    ] {
+        cmd.env_remove(k);
+    }
     // 分离模式已在真实环境验证：环境变量会完整传递给守护进程
     cmd.arg("serve")
         .arg("--detached")
@@ -987,6 +1022,11 @@ fn main() {
     install_desktop_entry();
     let mut relay_handle = relay::start();
     if let Some(r) = relay_handle.as_ref() {
+        // 登录态与 claude.ai 解耦：认证探测指向中继，由中继应答虚拟档案
+        ensure_profile_redirect(&format!("http://127.0.0.1:{}", r.port));
+        if let Some((_, org)) = oauth_forge::virtual_ids(&app_dir()) {
+            r.set_profile(org);
+        }
         if let Some(p) = find_provider(&cfg, &cfg.current) {
             if !p.base_url.trim().is_empty() {
                 let catalog = if p.models.is_empty() { vec![p.model.clone()] } else { p.models.clone() };

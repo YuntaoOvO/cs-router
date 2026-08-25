@@ -24,6 +24,10 @@ pub struct RelayTarget {
 struct Inner {
     target: RelayTarget,
     map: BTreeMap<String, String>,
+    /// 认证探测的本地应答体：claude.ai 不可达时探测超时 fail-open、
+    /// 可达时对虚拟令牌回 401 fail-closed，两种随机态都不可接受，
+    /// 故由中继固定应答 200，登录态与外网彻底解耦。
+    profile: String,
 }
 
 pub struct Relay {
@@ -58,6 +62,7 @@ pub fn start() -> Option<Relay> {
             roles: BTreeMap::new(),
         },
         map: BTreeMap::new(),
+        profile: String::new(),
     }));
     let shared = inner.clone();
     std::thread::spawn(move || {
@@ -87,6 +92,14 @@ impl Relay {
         }
         inner.target = target;
         inner.map = map;
+    }
+
+    /// 登记认证探测的应答体（虚拟 org UUID），空串表示未就绪。
+    pub fn set_profile(&self, org_uuid: String) {
+        let body = format!(
+            "{{\"organization\":{{\"uuid\":\"{org_uuid}\"}},\"enabled_plugins\":[]}}"
+        );
+        self.inner.lock().unwrap().profile = body;
     }
 }
 
@@ -250,6 +263,20 @@ fn rewrite_model(inner: &Inner, body: &[u8]) -> Vec<u8> {
 fn serve(mut stream: TcpStream, inner: &Mutex<Inner>) {
     let Some(req) = read_request(&mut stream) else { return };
     let inner = inner.lock().unwrap().clone();
+    // 认证探测最优先：与供应商配置无关，登录态永远本地应答
+    if req.path == "/api/oauth/profile" {
+        if inner.profile.is_empty() {
+            let _ = write_simple(&mut stream, 503, "profile not ready");
+            return;
+        }
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            inner.profile.len(),
+            inner.profile
+        );
+        let _ = stream.write_all(resp.as_bytes());
+        return;
+    }
     if inner.target.upstream.is_empty() {
         let _ = write_simple(&mut stream, 503, "relay not configured");
         return;
