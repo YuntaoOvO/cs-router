@@ -52,9 +52,20 @@ function toast(message, type = 'info') {
 
 function render() {
   renderCards();
+  renderDaemonBar();
   const custom = !!(state && state.settings && state.settings.custom_controls);
   $('titlebar').classList.toggle('hidden', !custom);
   document.documentElement.style.setProperty('--titlebar-h', custom ? '34px' : '0px');
+}
+
+function renderDaemonBar() {
+  if (!state) return;
+  const running = !!(state.status && state.status.running);
+  const port = state.status && state.status.port ? ` · 端口 ${state.status.port}` : '';
+  $('daemon-dot').className = `daemon-dot ${running ? 'running' : 'stopped'}`;
+  $('daemon-label').textContent = running ? `守护进程运行中${port}` : '守护进程已停止';
+  $('btn-daemon-launch').classList.toggle('hidden', running);
+  $('btn-daemon-stop').classList.toggle('hidden', !running);
 }
 
 function renderCards() {
@@ -104,7 +115,13 @@ function renderCards() {
         state.current = p.id;
         render();
         invoke('switch_provider', { id: p.id })
-          .then(() => toast(`已切换到 ${p.name}`, 'success'))
+          .then(() => {
+            if (state.settings && state.settings.manual_daemon) {
+              toast(`已切换到 ${p.name}，请手动重启守护进程`, 'info');
+            } else {
+              toast(`已切换到 ${p.name}`, 'success');
+            }
+          })
           .catch((err) => { toast(`切换失败：${err}`, 'error'); reload(); });
       }
     });
@@ -379,6 +396,7 @@ function openSettings() {
   $('s-fastfail').checked = !!s.fast_fail;
   $('s-controls').checked = s.custom_controls !== false;
   $('s-proxy').value = s.daemon_proxy || '';
+  $('s-manual').checked = !!s.manual_daemon;
   $('settings-overlay').classList.remove('hidden');
 }
 
@@ -390,6 +408,7 @@ function saveSettings() {
       fast_fail: $('s-fastfail').checked,
       custom_controls: $('s-controls').checked,
       daemon_proxy: $('s-proxy').value.trim(),
+      manual_daemon: $('s-manual').checked,
     },
   })
     .then(() => {
@@ -420,6 +439,21 @@ window.addEventListener('DOMContentLoaded', () => {
 
   $('btn-add').addEventListener('click', () => openEdit(null));
   $('btn-settings').addEventListener('click', openSettings);
+
+  $('btn-daemon-launch').addEventListener('click', () => {
+    $('btn-daemon-launch').disabled = true;
+    invoke('launch_daemon')
+      .then(() => { toast('守护进程已启动', 'success'); reload(); })
+      .catch((err) => { toast(`启动失败：${err}`, 'error'); })
+      .finally(() => { $('btn-daemon-launch').disabled = false; });
+  });
+  $('btn-daemon-stop').addEventListener('click', () => {
+    $('btn-daemon-stop').disabled = true;
+    invoke('stop_daemon')
+      .then(() => { toast('守护进程已停止', 'info'); reload(); })
+      .catch((err) => { toast(`停止失败：${err}`, 'error'); })
+      .finally(() => { $('btn-daemon-stop').disabled = false; });
+  });
 
   $('btn-back').addEventListener('click', closeEdit);
   $('btn-cancel').addEventListener('click', closeEdit);
@@ -505,7 +539,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   listen('state', (e) => { state = e.payload; render(); });
   listen('status', (e) => {
-    if (state) { state.status = e.payload; }
+    if (state) { state.status = e.payload; renderDaemonBar(); }
   });
 
   reload();

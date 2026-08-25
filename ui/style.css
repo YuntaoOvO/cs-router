@@ -90,6 +90,27 @@ body { padding-top: 56px; }
 
 .header-actions { display: flex; align-items: center; gap: 8px; }
 
+/* 守护进程状态栏 */
+.daemon-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 48px;
+  background: var(--muted);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted-fg);
+}
+.daemon-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--muted-fg);
+}
+.daemon-dot.running { background: var(--ok); }
+.daemon-dot.stopped { background: var(--danger); }
+.daemon-label { font-size: 12px; }
+
 /* 应用级窗口按钮 */
 .window-controls { display: flex; align-items: center; gap: 2px; }
 .wc-btn {

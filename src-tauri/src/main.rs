@@ -101,6 +101,10 @@ struct Settings {
     /// 应用级窗口按钮：开启用自建最小化、最大化、关闭，关闭沿用系统窗口
     #[serde(default = "default_true")]
     custom_controls: bool,
+    /// 手动守护进程模式：cs-router 只更新中继配置，不自动拉起或停止守护进程，
+    /// 用户需自行在命令行执行 claude-science serve 或 claude-science stop
+    #[serde(default)]
+    manual_daemon: bool,
 }
 
 impl Default for Settings {
@@ -111,6 +115,7 @@ impl Default for Settings {
             fast_fail: false,
             daemon_proxy: String::new(),
             custom_controls: true,
+            manual_daemon: false,
         }
     }
 }
@@ -535,6 +540,7 @@ fn apply_autostart(enabled: bool) -> Result<(), String> {
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let state = app.state::<AppState>();
     let cfg = state.cfg.lock().unwrap().clone();
+    let status = state.status.lock().unwrap().clone();
     drop(state);
     let mut switch_items: Vec<MenuItem<tauri::Wry>> = vec![];
     for p in &cfg.providers {
@@ -556,10 +562,16 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         )?);
     }
     let show = MenuItem::with_id(app, "act:show", "打开主界面", true, None::<&str>)?;
+    let daemon_toggle = if status.running {
+        MenuItem::with_id(app, "act:stop", "停止守护进程", true, None::<&str>)?
+    } else {
+        MenuItem::with_id(app, "act:launch", "启动守护进程", true, None::<&str>)?
+    };
     let lite = MenuItem::with_id(app, "act:lite", "轻量模式", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "act:quit", "退出", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
+    let sep3 = PredefinedMenuItem::separator(app)?;
     let mut refs: Vec<&dyn IsMenuItem<tauri::Wry>> = vec![];
     refs.push(&show);
     refs.push(&sep1);
@@ -567,6 +579,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         refs.push(it);
     }
     refs.push(&sep2);
+    refs.push(&daemon_toggle);
+    refs.push(&sep3);
     refs.push(&lite);
     refs.push(&quit);
     Menu::with_items(app, &refs)
@@ -615,6 +629,22 @@ fn handle_tray_action(app: &AppHandle, id: &str) {
                 let _ = w.set_focus();
             }
         }
+        "act:launch" => {
+            let a = app.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = do_launch(&a) {
+                    eprintln!("托盘启动失败：{e}");
+                }
+            });
+        }
+        "act:stop" => {
+            let a = app.clone();
+            std::thread::spawn(move || {
+                let _ = stop_daemon_blocking();
+                update_status(&a);
+                rebuild_tray(&a);
+            });
+        }
         // 轻量模式：仅驻留托盘，主窗口隐藏
         "act:lite" => {
             if let Some(w) = app.get_webview_window("main") {
@@ -657,6 +687,10 @@ fn do_launch(app: &AppHandle) -> Result<(), String> {
         });
         (provider, cfg.settings, port)
     };
+    // 手动模式：只更新中继，不拉起守护进程
+    if settings.manual_daemon {
+        return Ok(());
+    }
     // 虚拟登录幂等保证：令牌承载供应商密钥，模型列表与推理共用同一凭证
     let is_official = provider.base_url.trim().is_empty();
     let bearer = if is_official { String::new() } else { provider.api_key.clone() };
@@ -682,7 +716,7 @@ fn do_launch(app: &AppHandle) -> Result<(), String> {
 
 fn do_switch(app: &AppHandle, id: &str) -> Result<(), String> {
     // 快路径：保存、重建托盘、广播，命令立即返回，界面零等待
-    {
+    let manual = {
         let state = app.state::<AppState>();
         let mut cfg = state.cfg.lock().unwrap();
         if !cfg.providers.iter().any(|p| p.id == id) {
@@ -690,12 +724,33 @@ fn do_switch(app: &AppHandle, id: &str) -> Result<(), String> {
         }
         cfg.current = id.to_string();
         save_config(&cfg)?;
+        let manual = cfg.settings.manual_daemon;
         drop(cfg);
         drop(state);
-    }
+        manual
+    };
     rebuild_tray(app);
+    // 无论手动还是自动模式，都立即更新中继目标；relay 不依赖守护进程
+    if let Some(relay) = app.state::<AppState>().relay.as_ref() {
+        let cfg = app.state::<AppState>().cfg.lock().unwrap().clone();
+        if let Some(p) = find_provider(&cfg, id) {
+            if !p.base_url.trim().is_empty() {
+                let catalog = if p.models.is_empty() { vec![p.model.clone()] } else { p.models.clone() };
+                relay.set_target(relay::RelayTarget {
+                    upstream: relay::normalize_upstream(&p.base_url),
+                    default_model: p.model.clone(),
+                    catalog,
+                    roles: p.roles.to_map(),
+                });
+            }
+        }
+    }
     emit_state(app);
-    // 慢路径：守护进程停止与重启全部后台串行，连点切换按序收敛到最后选择
+    if manual {
+        // 手动模式：只更新配置与中继，不碰守护进程
+        return Ok(());
+    }
+    // 自动模式：守护进程停止与重启后台串行，连点切换按序收敛到最后选择
     let a = app.clone();
     std::thread::spawn(move || {
         let st = a.state::<AppState>();
@@ -718,6 +773,8 @@ fn update_status(app: &AppHandle) {
         *state.status.lock().unwrap() = st.clone();
     }
     let _ = app.emit("status", &st);
+    // 托盘菜单中的启动/停止项随状态切换，每次 status 更新都重建菜单
+    rebuild_tray(app);
     if let Some(tray) = app.tray_by_id("main") {
         let tip = if st.running {
             if st.port.is_empty() {
@@ -1035,6 +1092,34 @@ fn main() {
                     default_model: p.model.clone(),
                     catalog,
                     roles: p.roles.to_map(),
+                });
+            }
+        }
+    }
+
+    // 冷启动时若守护进程未在运行，自动拉起（manual_daemon 模式跳过）
+    if !cfg.settings.manual_daemon {
+        let boot_status = query_status();
+        if !boot_status.running {
+            let cur_provider = find_provider(&cfg, &cfg.current).cloned();
+            if let Some(p) = cur_provider {
+                let relay_port = relay_handle.as_ref().map(|r| r.port);
+                let settings = cfg.settings.clone();
+                std::thread::spawn(move || {
+                    let is_official = p.base_url.trim().is_empty();
+                    let bearer = if is_official { String::new() } else { p.api_key.clone() };
+                    if let Err(e) = oauth_forge::ensure_virtual_login(
+                        &home_dir().join(".claude-science"), &app_dir(), &bearer) {
+                        eprintln!("虚拟登录检查失败：{e}");
+                    }
+                    let base_override = if is_official {
+                        None
+                    } else {
+                        relay_port.map(|port| format!("http://127.0.0.1:{port}"))
+                    };
+                    if let Err(e) = spawn_serve(&p, &settings, base_override.as_deref()) {
+                        eprintln!("冷启动守护进程失败：{e}");
+                    }
                 });
             }
         }

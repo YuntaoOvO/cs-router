@@ -40,6 +40,14 @@
     </div>
   </header>
 
+  <div id="daemon-bar" class="daemon-bar">
+    <span id="daemon-dot" class="daemon-dot"></span>
+    <span id="daemon-label" class="daemon-label">检查中…</span>
+    <span class="spacer"></span>
+    <button id="btn-daemon-launch" class="btn sm primary hidden">启动</button>
+    <button id="btn-daemon-stop" class="btn sm ghost hidden">停止</button>
+  </div>
+
   <main id="cards"></main>
 
   <button id="btn-back" class="fab-back hidden" title="返回">
@@ -173,6 +181,10 @@
       <section class="setting">
         <header><h3>应用级窗口按钮</h3><p>开启后使用应用自建的最小化、最大化或还原、关闭按钮；关闭后沿用系统窗口模式</p></header>
         <label class="switch"><input id="s-controls" type="checkbox"><i></i></label>
+      </section>
+      <section class="setting">
+        <header><h3>手动守护进程模式</h3><p>开启后切换供应商只更新中继配置，不自动重启守护进程；需自行在终端运行 <code>claude-science stop</code> 和 <code>claude-science serve</code></p></header>
+        <label class="switch"><input id="s-manual" type="checkbox"><i></i></label>
       </section>
       <section class="setting">
         <header><h3>启动时探测快速失败</h3><p>无法访问 claude.ai 时让组织探测一秒内失败，界面正常启动；设置代理后此项忽略</p></header>
